@@ -1,5 +1,6 @@
 from random import randint
 import sys, traceback, threading, socket
+import time
 
 from VideoStream import VideoStream
 from RtpPacket import RtpPacket
@@ -60,6 +61,10 @@ class ServerWorker:
 					self.state = self.READY
 				except IOError:
 					self.replyRtsp(self.FILE_NOT_FOUND_404, seq[1])
+					print(f" Not found file: {filename}")
+					print(f"   Current file: {sys.path[0]}")
+					print(f"   Make sure file '{filename}' is in the current directory.")
+					return  
 				
 				# Generate a randomized RTSP session ID
 				self.clientInfo['session'] = randint(100000, 999999)
@@ -92,7 +97,9 @@ class ServerWorker:
 				print("processing PAUSE\n")
 				self.state = self.READY
 				
-				self.clientInfo['event'].set()
+				# Set the event to stop sending RTP packets
+				if 'event' in self.clientInfo:
+					self.clientInfo['event'].set()
 			
 				self.replyRtsp(self.OK_200, seq[1])
 		
@@ -100,12 +107,15 @@ class ServerWorker:
 		elif requestType == self.TEARDOWN:
 			print("processing TEARDOWN\n")
 
-			self.clientInfo['event'].set()
+			# Kiểm tra event có tồn tại trước khi set
+			if 'event' in self.clientInfo:
+				self.clientInfo['event'].set()
 			
 			self.replyRtsp(self.OK_200, seq[1])
 			
 			# Close the RTP socket
-			self.clientInfo['rtpSocket'].close()
+			if 'rtpSocket' in self.clientInfo:
+				self.clientInfo['rtpSocket'].close()
 			
 	def sendRtp(self):
 		"""Send RTP packets over UDP."""
@@ -122,7 +132,16 @@ class ServerWorker:
 				try:
 					address = self.clientInfo['rtspSocket'][1][0]
 					port = int(self.clientInfo['rtpPort'])
-					self.clientInfo['rtpSocket'].sendto(self.makeRtp(data, frameNumber),(address,port))
+					
+					# makeRtp now return list of packets 
+					packets = self.makeRtp(data, frameNumber)
+					
+					# Gửi từng packet
+					for packet in packets:
+						self.clientInfo['rtpSocket'].sendto(packet, (address, port))
+						# Delay nhỏ giữa các fragments để tránh tắc nghẽn
+						time.sleep(0.001)  # 1ms delay
+						
 				except:
 					print("Connection Error")
 					#print('-'*60)
@@ -130,21 +149,32 @@ class ServerWorker:
 					#print('-'*60)
 
 	def makeRtp(self, payload, frameNbr):
-		"""RTP-packetize the video data."""
-		version = 2
-		padding = 0
-		extension = 0
-		cc = 0
-		marker = 0
-		pt = 26 # MJPEG type
-		seqnum = frameNbr
-		ssrc = 0 
+		"""RTP-packetize the video data with fragmentation support."""
 		
-		rtpPacket = RtpPacket()
+		# Kiểm tra kích thước frame
+		frameSize = len(payload)
 		
-		rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload)
+		# Nếu frame nhỏ hơn hoặc bằng 1400 bytes, gửi bình thường (không cần fragment)
+		if frameSize <= 1400:
+			version = 2
+			padding = 0
+			extension = 0
+			cc = 0
+			marker = 1  # Frame hoàn chỉnh, set marker = 1
+			pt = 26  # MJPEG type
+			seqnum = frameNbr
+			ssrc = 0
+			
+			rtpPacket = RtpPacket()
+			rtpPacket.encode(version, padding, extension, cc, seqnum, marker, pt, ssrc, payload)
+			
+			return [rtpPacket.getPacket()]  # Trả về list với 1 packet
 		
-		return rtpPacket.getPacket()
+		# Nếu frame lớn hơn 1400 bytes, sử dụng fragmentation
+		else:
+			print(f"🔷 Large frame detected: {frameSize} bytes - Fragmenting...")
+			fragments = RtpPacket.fragmentFrame(payload, frameNbr)
+			return fragments  # Trả về list nhiều packets
 		
 	def replyRtsp(self, code, seq):
 		"""Send RTSP reply to the client."""
