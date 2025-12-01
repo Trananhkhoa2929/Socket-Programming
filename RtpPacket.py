@@ -1,7 +1,7 @@
 import sys
 from time import time
 HEADER_SIZE = 12
-MAX_PAYLOAD_SIZE = 1400 # Maximum payload size for fragmentation
+MAX_PAYLOAD_SIZE = 1400  # Maximum payload size for fragmentation (HD support)
 
 class RtpPacket:	
     header = bytearray(HEADER_SIZE)
@@ -14,23 +14,25 @@ class RtpPacket:
         timestamp = int(time())
         header = bytearray(HEADER_SIZE)
         
-        # Byte 0: V(2), P(1), X(1), CC(4)
+        # Byte 0: V(2 bits), P(1 bit), X(1 bit), CC(4 bits)
+        # V = version (2), P = padding (0), X = extension (0), CC = 0
         header[0] = (version << 6) | (padding << 5) | (extension << 4) | cc
         
-        # Byte 1: M(1), PT(7)
+        # Byte 1: M(1 bit), PT(7 bits)
+        # M = marker bit, PT = payload type (26 for MJPEG)
         header[1] = (marker << 7) | pt
         
-        # Bytes 2-3: Sequence Number (16 bits)
-        header[2] = (seqnum >> 8) & 0xFF
-        header[3] = seqnum & 0xFF
+        # Bytes 2-3: Sequence Number (16 bits, big-endian)
+        header[2] = (seqnum >> 8) & 0xFF  # High-order byte
+        header[3] = seqnum & 0xFF          # Low-order byte
         
-        # Bytes 4-7: Timestamp (32 bits)
+        # Bytes 4-7: Timestamp (32 bits, big-endian)
         header[4] = (timestamp >> 24) & 0xFF
         header[5] = (timestamp >> 16) & 0xFF
         header[6] = (timestamp >> 8) & 0xFF
         header[7] = timestamp & 0xFF
         
-        # Bytes 8-11: SSRC (32 bits)
+        # Bytes 8-11: SSRC (32 bits, big-endian)
         header[8] = (ssrc >> 24) & 0xFF
         header[9] = (ssrc >> 16) & 0xFF
         header[10] = (ssrc >> 8) & 0xFF
@@ -42,12 +44,20 @@ class RtpPacket:
         # Get the payload from the argument
         self.payload = payload
     
-    # Fragment large frames
+    # HD Video Streaming: Fragment large frames that exceed MTU
     @staticmethod
     def fragmentFrame(frameData, frameNbr, version=2, padding=0, extension=0, cc=0, pt=26, ssrc=0):
         """
-        Fragment a large frame into multiple RTP packets.
-        Returns: List of RTP packets
+        Fragment a large frame into multiple RTP packets for HD streaming.
+        Implements fragmentation for frames exceeding MTU. 
+        
+        Args:
+            frameData: The video frame data to fragment
+            frameNbr: The frame number
+            version, padding, extension, cc, pt, ssrc: RTP header fields
+            
+        Returns:
+            List of RTP packets (as bytes)
         """
         fragments = []
         totalSize = len(frameData)
@@ -62,12 +72,13 @@ class RtpPacket:
             # Get fragment data
             fragmentData = frameData[offset:offset + fragmentSize]
             
-            # Determine marker bit
+            # Determine marker bit - set to 1 for last fragment
             isLastFragment = (offset + fragmentSize >= totalSize)
             marker = 1 if isLastFragment else 0
             
             # Create RTP packet
-            # Sequence number = frameNbr * 100 + fragmentIndex (để phân biệt fragments)
+            # Sequence number encoding: frameNbr * 100 + fragmentIndex
+            # This allows client to identify which fragments belong to which frame
             seqnum = frameNbr * 100 + fragmentIndex
             
             rtpPacket = RtpPacket()
@@ -78,7 +89,7 @@ class RtpPacket:
             offset += fragmentSize
             fragmentIndex += 1
             
-        print(f"Frame {frameNbr}: Divide {len(fragments)} fragments (Total size: {totalSize} bytes)")
+        print(f"Frame {frameNbr}: Fragmented into {len(fragments)} packets (Total size: {totalSize} bytes)")
         return fragments
         
     def decode(self, byteStream):
@@ -97,7 +108,7 @@ class RtpPacket:
     
     def timestamp(self):
         """Return timestamp."""
-        timestamp = self.header[4] << 24 | self.header[5] << 16 | self.header[6] << 8 | self.header[7]
+        timestamp = self.header[4] << 24 | self.header[5] << 16 | self. header[6] << 8 | self.header[7]
         return int(timestamp)
     
     def payloadType(self):
@@ -106,13 +117,13 @@ class RtpPacket:
         return int(pt)
     
     def marker(self):
-        """Return marker bit ."""
+        """Return marker bit (1 = last fragment/complete frame, 0 = more fragments coming)."""
         return int(self.header[1] >> 7)
     
     def getPayload(self):
         """Return payload."""
-        return self.payload
+        return self. payload
         
     def getPacket(self):
         """Return RTP packet."""
-        return self.header + self.payload
+        return self.header + self. payload

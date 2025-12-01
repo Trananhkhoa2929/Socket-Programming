@@ -1,14 +1,8 @@
-Cách chạy:
-Mở New Terminal
-
 Terminal 1:
-
 ```bash
-python Server.py 5000
+python Server.py 5540
 ```
-
-Mở 1 Terminal thứ 2:
-
+Terminal 2:
 ```bash
-python ClientLauncher.py localhost 5000 25000 movie.Mjpeg
+python ClientLauncher.py localhost 5540 25000 movie.Mjpeg
 ```
