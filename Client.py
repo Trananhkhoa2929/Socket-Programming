@@ -10,10 +10,9 @@ from RtpPacket import RtpPacket
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
 
-# Client-Side Caching Configuration
-BUFFER_SIZE = 10  # Pre-buffer N frames before playing (đủ để mượt, không quá delay)
-FRAME_RATE = 20 # Target FPS
-FRAME_PERIOD = 1.0 / FRAME_RATE  # ~33ms per frame
+MIN_BUFFER = 5
+FRAME_RATE = 30
+FRAME_PERIOD = 1.0 / FRAME_RATE
 
 class Client:
     INIT = 0
@@ -25,6 +24,7 @@ class Client:
     PLAY = 1
     PAUSE = 2
     TEARDOWN = 3
+    DESCRIBE = 4
     
     def __init__(self, master, serveraddr, serverport, rtpport, filename):
         self.master = master
@@ -41,60 +41,77 @@ class Client:
         self. connectToServer()
         self.frameNbr = 0
         
-        # Client-Side Caching: Frame buffer to reduce jitter
+        # Frame buffer
         self.frameBuffer = deque()
         self.bufferLock = threading.Lock()
         self. bufferReady = threading.Event()
         
-        # For HD fragment reassembly
+        # Fragment reassembly
         self.fragmentBuffer = {}
         self.fragmentLock = threading. Lock()
         
         # Playback control
         self.playEvent = threading.Event()
         
+        # Statistics cho HD streaming
+        self.totalBytes = 0
+        self.startTime = None
+        self.displayCount = 0
+        
     def createWidgets(self):
-        """Build GUI."""
-        # Create Setup button
-        self. setup = Button(self.master, width=20, padx=3, pady=3)
+        """Build GUI giống demo giảng viên."""
+        self.master.title("RTPClient")
+        
+        # Video display
+        self. label = Label(self.master, height=20, bg='black')
+        self. label.grid(row=0, column=0, columnspan=5, sticky=W+E+N+S, padx=5, pady=5)
+        
+        # Time label
+        self.timeLabel = Label(self.master, text="00:00", font=("Arial", 12))
+        self.timeLabel.grid(row=1, column=0, columnspan=2, padx=5, pady=5)
+        
+        # Describe button
+        self. describeBtn = Button(self. master, width=10, padx=3, pady=3)
+        self.describeBtn["text"] = "Describe"
+        self. describeBtn["command"] = self.describeMovie
+        self.describeBtn.grid(row=1, column=4, padx=2, pady=2)
+        
+        # Control buttons
+        self. setup = Button(self.master, width=10, padx=3, pady=3)
         self.setup["text"] = "Setup"
         self. setup["command"] = self.setupMovie
-        self.setup.grid(row=1, column=0, padx=2, pady=2)
+        self.setup.grid(row=2, column=0, padx=2, pady=2)
         
-        # Create Play button        
-        self.start = Button(self. master, width=20, padx=3, pady=3)
+        self.start = Button(self. master, width=10, padx=3, pady=3)
         self.start["text"] = "Play"
         self. start["command"] = self.playMovie
-        self.start.grid(row=1, column=1, padx=2, pady=2)
+        self. start.grid(row=2, column=1, padx=2, pady=2)
         
-        # Create Pause button            
-        self.pause = Button(self. master, width=20, padx=3, pady=3)
+        self.pause = Button(self.master, width=10, padx=3, pady=3)
         self.pause["text"] = "Pause"
-        self.pause["command"] = self.pauseMovie
-        self.pause.grid(row=1, column=2, padx=2, pady=2)
+        self. pause["command"] = self.pauseMovie
+        self.pause.grid(row=2, column=2, padx=2, pady=2)
         
-        # Create Teardown button
-        self.teardown = Button(self.master, width=20, padx=3, pady=3)
+        self.teardown = Button(self.master, width=10, padx=3, pady=3)
         self.teardown["text"] = "Teardown"
         self.teardown["command"] = self. exitClient
-        self.teardown.grid(row=1, column=3, padx=2, pady=2)
-        
-        # Create a label to display the movie
-        self.label = Label(self. master, height=19)
-        self. label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5)
-        
-        # Buffer status label
-        self. bufferLabel = Label(self.master, text="Buffer: 0 frames")
-        self.bufferLabel. grid(row=2, column=0, columnspan=4, padx=5, pady=2)
+        self.teardown.grid(row=2, column=3, padx=2, pady=2)
+    
+    def describeMovie(self):
+        """Describe button - hiển thị thông tin stream."""
+        if self.state != self.INIT:
+            self.sendRtspRequest(self. DESCRIBE)
     
     def setupMovie(self):
         """Setup button handler."""
         if self.state == self.INIT:
-            self.sendRtspRequest(self. SETUP)
+            self.sendRtspRequest(self.SETUP)
     
     def exitClient(self):
         """Teardown button handler."""
-        self.sendRtspRequest(self.TEARDOWN)        
+        self.sendRtspRequest(self.TEARDOWN)
+        # In data rate khi kết thúc
+        self.printStatistics()
         self.master.destroy()
         try:
             os. remove(CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT)
@@ -105,32 +122,42 @@ class Client:
         """Pause button handler."""
         if self.state == self.PLAYING:
             self.sendRtspRequest(self.PAUSE)
+            # In data rate khi pause
+            self.printStatistics()
+    
+    def printStatistics(self):
+        """In thống kê video data rate."""
+        if self.startTime and self.totalBytes > 0:
+            elapsed = time.time() - self.startTime
+            if elapsed > 0:
+                dataRate = self.totalBytes / elapsed
+                print(f"[*]Video data rate: {int(dataRate)} bytes/sec")
     
     def playMovie(self):
         """Play button handler."""
         if self.state == self. READY:
-            # Reset events
-            self.playEvent.clear()
+            self. playEvent.clear()
             self.bufferReady.clear()
+            self. displayCount = 0
+            self.totalBytes = 0
+            self.startTime = time.time()
             
-            # Clear old buffer
             with self.bufferLock:
                 self.frameBuffer.clear()
             
-            # Start RTP listener thread
+            with self.fragmentLock:
+                self. fragmentBuffer.clear()
+            
             threading.Thread(target=self.listenRtp, daemon=True). start()
+            threading.Thread(target=self.playFromBuffer, daemon=True).start()
             
-            # Start playback thread
-            threading.Thread(target=self. playFromBuffer, daemon=True).start()
-            
-            # Send PLAY request
-            self.sendRtspRequest(self. PLAY)
+            self.sendRtspRequest(self.PLAY)
     
     def listenRtp(self):        
-        """Listen for RTP packets and store in buffer (Client-Side Caching)."""
+        """Listen for RTP packets."""
         while True:
             try:
-                data = self.rtpSocket.recv(20480)
+                data = self.rtpSocket.recv(65535)
                 if data:
                     rtpPacket = RtpPacket()
                     rtpPacket.decode(data)
@@ -139,17 +166,19 @@ class Client:
                     try:
                         marker = rtpPacket.marker()
                     except:
-                        marker = 0
+                        marker = 1
                     payload = rtpPacket.getPayload()
                     
-                    # Check if this is a single-packet frame (non-fragmented)
+                    # Non-fragmented frame
                     if seq < 100 and marker == 1:
                         currFrameNbr = seq
                         if currFrameNbr > self.frameNbr:
                             self.addToBuffer(currFrameNbr, payload)
+                            # Thống kê bytes
+                            self. totalBytes += len(payload)
                         continue
                     
-                    # Handle fragmented frames (HD streaming support)
+                    # Fragmented frames (HD support)
                     frameNbr = seq // 100
                     fragIdx = seq % 100
                     
@@ -158,7 +187,6 @@ class Client:
                             self. fragmentBuffer[frameNbr] = {}
                         self.fragmentBuffer[frameNbr][fragIdx] = payload
                         
-                        # If this is the last fragment (marker == 1), reassemble
                         if marker == 1:
                             frags = self.fragmentBuffer. get(frameNbr, {})
                             if frags:
@@ -167,9 +195,13 @@ class Client:
                                 
                                 if frameNbr > self.frameNbr:
                                     self.addToBuffer(frameNbr, assembled)
+                                    # Thống kê bytes
+                                    self.totalBytes += len(assembled)
                     
+            except socket.timeout:
+                continue
             except:
-                if self.playEvent.isSet(): 
+                if self.playEvent.is_set(): 
                     break
                 if self.teardownAcked == 1:
                     try:
@@ -180,76 +212,76 @@ class Client:
                     break
     
     def addToBuffer(self, frameNbr, payload):
-        """Add frame to buffer (Client-Side Caching)."""
+        """Add frame to buffer."""
         with self.bufferLock:
             self.frameBuffer.append((frameNbr, payload))
             bufferSize = len(self.frameBuffer)
             
-            # Update buffer status display
-            self.master.after(0, lambda: self.updateBufferLabel(bufferSize))
-            
-            # Signal when buffer has enough frames
-            if bufferSize >= BUFFER_SIZE and not self.bufferReady.is_set():
-                print(f"Buffer ready with {bufferSize} frames")
-                self.bufferReady.set()
+            if bufferSize >= MIN_BUFFER and not self.bufferReady.is_set():
+                self. bufferReady. set()
     
-    def updateBufferLabel(self, size):
-        """Update buffer label safely from main thread."""
-        try:
-            self.bufferLabel. configure(text=f"Buffer: {size} frames")
-        except:
-            pass
+    def updateTime(self):
+        """Cập nhật thời gian phát."""
+        if self.startTime:
+            elapsed = int(time.time() - self.startTime)
+            minutes = elapsed // 60
+            seconds = elapsed % 60
+            self.timeLabel. configure(text=f"{minutes:02d}:{seconds:02d}")
     
     def playFromBuffer(self):
-        """Play frames from buffer with stable frame rate."""
-        # Wait for initial buffering
-        print(f"Buffering...  waiting for {BUFFER_SIZE} frames")
+        """Play frames từ buffer."""
+        print(f"Buffering...  waiting for {MIN_BUFFER} frames")
         self.bufferReady.wait()
-        print("Starting playback from buffer...")
+        print("Starting playback...")
         
-        lastTime = time.time()
+        lastFrameTime = time.time()
         
         while True:
-            if self.playEvent.isSet() or self.teardownAcked == 1:
+            if self.playEvent.is_set() or self.teardownAcked == 1:
                 break
             
-            # Calculate time to wait for stable frame rate
-            currentTime = time.time()
-            elapsed = currentTime - lastTime
-            sleepTime = FRAME_PERIOD - elapsed
-            
-            if sleepTime > 0:
-                time.sleep(sleepTime)
-            
-            lastTime = time.time()
-            
-            # Get frame from buffer
             frame = None
-            with self.bufferLock:
+            with self. bufferLock:
                 if len(self.frameBuffer) > 0:
                     frameNbr, payload = self.frameBuffer.popleft()
                     frame = (frameNbr, payload)
-                    bufferSize = len(self.frameBuffer)
-                    self.master.after(0, lambda bs=bufferSize: self.updateBufferLabel(bs))
             
             if frame:
                 frameNbr, payload = frame
+                
+                # Timing control
+                currentTime = time.time()
+                elapsed = currentTime - lastFrameTime
+                sleepTime = FRAME_PERIOD - elapsed
+                
+                if sleepTime > 0:
+                    time.sleep(sleepTime)
+                
+                lastFrameTime = time.time()
+                
                 if frameNbr > self.frameNbr:
                     self.frameNbr = frameNbr
+                    self.displayCount += 1
+                    
+                    # In Current Seq Num giống demo
+                    print(f"Current Seq Num: {frameNbr}")
+                    
                     self.updateMovie(self.writeFrame(payload))
+                    
+                    # Cập nhật thời gian
+                    self.master.after(0, self.updateTime)
             else:
-                # Buffer empty - wait a bit for more frames
-                time.sleep(0.01)
+                time.sleep(0.001)
                     
     def writeFrame(self, data):
-        """Write the received frame to a temp image file."""
+        """Write frame to temp file."""
         cachename = CACHE_FILE_NAME + str(self.sessionId) + CACHE_FILE_EXT
         with open(cachename, "wb") as file:
             file. write(data)
         return cachename
     
     def updateMovie(self, imageFile):
-        """Update the image file as video frame in the GUI."""
+        """Update video frame in GUI."""
         try:
             photo = ImageTk. PhotoImage(Image. open(imageFile))
             self.label.configure(image=photo, height=288) 
@@ -259,7 +291,7 @@ class Client:
         
     def connectToServer(self):
         """Connect to the Server."""
-        self.rtspSocket = socket.socket(socket.AF_INET, socket. SOCK_STREAM)
+        self. rtspSocket = socket.socket(socket.AF_INET, socket. SOCK_STREAM)
         try:
             self. rtspSocket.connect((self.serverAddr, self.serverPort))
         except:
@@ -268,7 +300,6 @@ class Client:
     def sendRtspRequest(self, requestCode):
         """Send RTSP request to the server."""    
         
-        # SETUP request
         if requestCode == self. SETUP and self.state == self.INIT:
             threading.Thread(target=self.recvRtspReply, daemon=True).start()
             self.rtspSeq += 1
@@ -277,33 +308,36 @@ class Client:
             request += f"Transport: RTP/UDP; client_port= {self.rtpPort}\r\n"
             self.requestSent = self. SETUP
         
-        # PLAY request
-        elif requestCode == self. PLAY and self.state == self.READY:
+        elif requestCode == self.PLAY and self.state == self.READY:
             self.rtspSeq += 1
-            request = f"PLAY {self.fileName} RTSP/1.0\r\n"
+            request = f"PLAY {self.fileName} RTSP/1. 0\r\n"
             request += f"CSeq: {self.rtspSeq}\r\n"
             request += f"Session: {self.sessionId}\r\n"
             self.requestSent = self.PLAY
         
-        # PAUSE request
-        elif requestCode == self. PAUSE and self. state == self. PLAYING:
-            self.rtspSeq += 1
+        elif requestCode == self. PAUSE and self.state == self.PLAYING:
+            self. rtspSeq += 1
             request = f"PAUSE {self.fileName} RTSP/1.0\r\n"
-            request += f"CSeq: {self.rtspSeq}\r\n"
+            request += f"CSeq: {self. rtspSeq}\r\n"
             request += f"Session: {self.sessionId}\r\n"
-            self.requestSent = self.PAUSE
+            self.requestSent = self. PAUSE
             
-        # TEARDOWN request
-        elif requestCode == self. TEARDOWN and not self.state == self.INIT:
+        elif requestCode == self.TEARDOWN and not self.state == self.INIT:
             self. rtspSeq += 1
             request = f"TEARDOWN {self.fileName} RTSP/1.0\r\n"
             request += f"CSeq: {self.rtspSeq}\r\n"
             request += f"Session: {self.sessionId}\r\n"
             self.requestSent = self.TEARDOWN
+            
+        elif requestCode == self.DESCRIBE:
+            self.rtspSeq += 1
+            request = f"DESCRIBE {self.fileName} RTSP/1.0\r\n"
+            request += f"CSeq: {self.rtspSeq}\r\n"
+            request += f"Session: {self.sessionId}\r\n"
+            self.requestSent = self.DESCRIBE
         else:
             return
         
-        # Send the RTSP request
         self.rtspSocket. send(request.encode())
         print('\nData sent:\n' + request)
     
@@ -345,8 +379,10 @@ class Client:
     
     def openRtpPort(self):
         """Open RTP socket."""
-        self.rtpSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.rtpSocket = socket. socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.rtpSocket. settimeout(0.5)
+        self.rtpSocket. setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
+        
         try:
             self.rtpSocket.bind(('', self.rtpPort))
         except:

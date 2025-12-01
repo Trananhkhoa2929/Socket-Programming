@@ -118,7 +118,7 @@ class ServerWorker:
     def sendRtp(self):
         """Send RTP packets over UDP."""
         while True:
-            self.clientInfo['event'].wait(0.05) 
+            self.clientInfo['event'].wait(0.03)  # Approximately 30 fps
             
             # Stop sending if request is PAUSE or TEARDOWN
             if self.clientInfo['event'].isSet(): 
@@ -169,7 +169,6 @@ class ServerWorker:
         
         # HD Support: Fragment large frames
         else:
-            print(f"HD Frame {frameNbr}: {frameSize} bytes - Fragmenting...")
             fragments = RtpPacket. fragmentFrame(payload, frameNbr)
             return fragments  # Return list of multiple packets
         

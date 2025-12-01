@@ -89,7 +89,7 @@ class RtpPacket:
             offset += fragmentSize
             fragmentIndex += 1
             
-        print(f"Frame {frameNbr}: Fragmented into {len(fragments)} packets (Total size: {totalSize} bytes)")
+        # print(f"Frame {frameNbr}: Fragmented into {len(fragments)} packets (Total size: {totalSize} bytes)")
         return fragments
         
     def decode(self, byteStream):
