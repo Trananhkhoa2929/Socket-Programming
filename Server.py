@@ -1,5 +1,4 @@
 import sys, socket
-
 from ServerWorker import ServerWorker
 
 class Server:	
@@ -9,9 +8,12 @@ class Server:
 			SERVER_PORT = int(sys.argv[1])
 		except:
 			print("[Usage: Server.py Server_port]\n")
+			return # Exit if no port
+
 		rtspSocket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		rtspSocket.bind(('', SERVER_PORT))
 		rtspSocket.listen(5)        
+		print(f"RTSP Server listening on port {SERVER_PORT}...")
 
 		# Receive client info (address,port) through RTSP/TCP session
 		while True:
@@ -21,5 +23,3 @@ class Server:
 
 if __name__ == "__main__":
 	(Server()).main()
-
-
