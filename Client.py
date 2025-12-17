@@ -7,9 +7,9 @@ from queue import Queue
 from RtpPacket import RtpPacket
 
 # --- CẤU HÌNH BỘ ĐỆM & VIDEO ---
-BUFFER_SIZE = 100      # Tăng bộ đệm lên để thấy rõ hiệu quả caching
-MIN_BUFFER_SIZE = 20   # Phải nạp đủ 20 frames mới bắt đầu chiếu (Pre-buffering)
-FPS_TARGET = 30        # Tốc độ chiếu video mong muốn
+BUFFER_SIZE = 100      # bộ đệm catching
+MIN_BUFFER_SIZE = 20   # đủ 20 frames mới play
+FPS_TARGET = 20       #
 
 CACHE_FILE_NAME = "cache-"
 CACHE_FILE_EXT = ".jpg"
@@ -74,12 +74,12 @@ class Client:
 		self.teardown = Button(btnFrame, text="Teardown", command=self.exitClient, width=15)
 		self.teardown.grid(row=0, column=3, padx=2, pady=2)
 		
-		# Màn hình Video
+		# Màn hình 
 		self.label = Label(self.master, height=19, bg="black", fg="white")
 		self.label.grid(row=0, column=0, columnspan=4, sticky=W+E+N+S, padx=5, pady=5)
 		self.label.config(text="Click Setup to Start")
 		
-		# --- STATISTIC LABELS (Hàng 1) ---
+		# statistics
 		statFrame = Frame(self.master, relief=GROOVE, borderwidth=2)
 		statFrame.grid(row=1, column=0, columnspan=4, sticky=W+E, padx=5, pady=5)
 		
@@ -133,22 +133,22 @@ class Client:
 					currSeqNum = rtpPacket.seqNum()
 					payload = rtpPacket.getPayload()
 					
-					# --- STATS CALCULATION ---
-					self.stat_totalBytes += len(payload) + 12 # Payload + Header
+					self.stat_totalBytes += len(payload) + 12 
 					self.stat_totalPackets += 1
 					
-					# Detect Loss: If jumping more than 1 seqNum (and not first packet)
 					if self.stat_lastSeqNum != -1:
 						diff = currSeqNum - self.stat_lastSeqNum
 						if diff > 1:
 							self.stat_lostPackets += (diff - 1)
 					self.stat_lastSeqNum = currSeqNum
-					# -------------------------
 
-					# Reassembly Logic
 					current_frame_fragments.append(payload)
 					
-					if rtpPacket.marker() == 1: # End of frame
+					if rtpPacket.marker() == 1: 
+	
+						self.frameNbr += 1
+						print(f"Current Frame Num: {self.frameNbr} (Seq: {currSeqNum})")
+
 						full_frame = b''.join(current_frame_fragments)
 						current_frame_fragments = []
 						
@@ -181,17 +181,16 @@ class Client:
 			# Intelligent Buffering Logic
 			buff_size = self.frameBuffer.qsize()
 			if buff_size < MIN_BUFFER_SIZE and self.isBuffering:
-				# Vẫn đang trong chế độ nạp, chưa chiếu
-				# self.lblBuffer.config(text=f"Buffering... {buff_size}/{MIN_BUFFER_SIZE}")
+				# đang nạp -> chưa phát
 				time.sleep(0.1)
 				continue
 			elif buff_size == 0:
-				# Hết sạch buffer -> chuyển sang chế độ nạp
+				# Hết buffer -> nạp
 				self.isBuffering = True
 				print("Buffer empty! Re-buffering...")
 				continue
 			else:
-				# Buffer ổn -> Chiếu
+				# Buffer possible -> Chiếu
 				self.isBuffering = False
 
 			if not self.frameBuffer.empty():
@@ -309,9 +308,11 @@ class Client:
 			if self.sessionId == session:
 				if int(lines[0].split(' ')[1]) == 200: 
 					if self.requestSent == self.SETUP:
+						print("Transition: INIT -> READY") # LOG CHUYỂN TRẠNG THÁI
 						self.state = self.READY
 						self.openRtpPort() 
 					elif self.requestSent == self.PLAY:
+						print("Transition: READY -> PLAYING") # Chuyển tt
 						self.state = self.PLAYING
 						if not hasattr(self, 'rtp_thread'):
 							self.rtp_thread = threading.Thread(target=self.receiveRtp)
@@ -320,9 +321,11 @@ class Client:
 							self.display_thread.start()
 							self.isBuffering = True
 					elif self.requestSent == self.PAUSE:
+						print("Transition: PLAYING -> READY") # Chuyển tt
 						self.state = self.READY
 						self.playEvent.set()
 					elif self.requestSent == self.TEARDOWN:
+						print("Transition: -> INIT") # Chuyển tt
 						self.state = self.INIT
 						self.teardownAcked = 1 
 	

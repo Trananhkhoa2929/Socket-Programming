@@ -1,5 +1,6 @@
 from random import randint
 import sys, traceback, threading, socket, time
+
 from VideoStream import VideoStream
 from RtpPacket import RtpPacket
 
@@ -44,6 +45,7 @@ class ServerWorker:
 		
 		if requestType == self.SETUP:
 			if self.state == self.INIT:
+				print("processing SETUP\n") # IN DÒNG PROCESSING
 				try:
 					self.clientInfo['videoStream'] = VideoStream(filename)
 					self.state = self.READY
@@ -56,6 +58,7 @@ class ServerWorker:
 		
 		elif requestType == self.PLAY:
 			if self.state == self.READY:
+				print("processing PLAY\n")
 				self.state = self.PLAYING
 				self.clientInfo["rtpSocket"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 				self.replyRtsp(self.OK_200, seq[1])
@@ -65,11 +68,13 @@ class ServerWorker:
 		
 		elif requestType == self.PAUSE:
 			if self.state == self.PLAYING:
+				print("processing PAUSE\n")
 				self.state = self.READY
 				self.clientInfo['event'].set()
 				self.replyRtsp(self.OK_200, seq[1])
 		
 		elif requestType == self.TEARDOWN:
+			print("processing TEARDOWN\n") 
 			self.clientInfo['event'].set()
 			self.replyRtsp(self.OK_200, seq[1])
 			if 'rtpSocket' in self.clientInfo:
@@ -78,7 +83,8 @@ class ServerWorker:
 	def sendRtp(self):
 		"""Send RTP packets with Flow Control for Smoother Playback."""
 		MAX_PAYLOAD_SIZE = 1400 
-		FRAME_PERIOD = 0.03  # 0.04s = 25 FPS (gửi nhanh hơn Client chiếu 20FPS để lấp Buffer)
+		
+		FRAME_PERIOD = 0.04 # (~33 FPS)
 		
 		while True:
 			self.clientInfo['event'].wait(FRAME_PERIOD) 
@@ -95,6 +101,11 @@ class ServerWorker:
 				
 				bytes_sent = 0
 				total_len = len(data)
+				
+				# in current frame
+				packet_count = (total_len // MAX_PAYLOAD_SIZE) + (1 if total_len % MAX_PAYLOAD_SIZE != 0 else 0)
+				if packet_count > 1:
+					print(f"HD Frame {frameNumber} too large ({total_len} bytes). Fragmenting into {packet_count} packets.")
 				
 				while bytes_sent < total_len:
 					chunk_size = min(MAX_PAYLOAD_SIZE, total_len - bytes_sent)

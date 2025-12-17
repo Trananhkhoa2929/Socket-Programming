@@ -10,13 +10,6 @@ if __name__ == "__main__":
 		fileName = sys.argv[4]	
 	except:
 		print("[Usage: ClientLauncher.py Server_name Server_port RTP_port Video_file]\n")	
-		# Default values for easier testing if arguments not provided
-		# You can remove this or modify as needed
-		# serverAddr = "127.0.0.1"
-		# serverPort = "1025"
-		# rtpPort = "5000"
-		# fileName = "movie.Mjpeg"
-		sys.exit()
 
 	root = Tk()
 	
